@@ -1,0 +1,37 @@
+indexing-settings:
+  siteConfigs:
+    - url: https://www.skillbox.ru
+      name: Skillbox
+    - url: https://www.lenta.ru
+      name: Лента.ру
+    - url: https://www.playback.ru
+      name: PlayBack.Ru
+    - url: https://ipfran.ru
+      name: IPFran
+    - url: https://dimonvideo.ru
+      name: Android.ru
+
+server:
+  port: 8080
+
+app:
+  userAgent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/50.0.2661.11 Safari/537.36
+  referer: http://www.google.com
+
+spring:
+  datasource:
+    username: root
+    password: 951Zz852Zz753.mysql
+    url: jdbc:mysql://localhost:3306/super_search_engine?useSSL=false&requireSSL=false&allowPublicKeyRetrieval=true
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQL8Dialect
+      logging:
+        level:
+          org:
+            hibernate:
+              SQL: DEBUG
