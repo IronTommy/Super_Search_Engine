@@ -12,153 +12,144 @@ import searchengine.model.SiteStatus;
 import searchengine.repository.PageRepository;
 import searchengine.repository.SiteRepository;
 
-import java.time.LocalDateTime;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @Service
 public class IndexingServiceImpl implements IndexingService {
 
-    private static final Logger logger = LoggerFactory.getLogger(SiteCrawler.class);
+    private static final Logger logger = LoggerFactory.getLogger(IndexingServiceImpl.class);
 
     private final SiteRepository siteRepository;
     private final PageRepository pageRepository;
+
     private final SiteCrawler siteCrawler;
     private final SitesList sitesList;
 
-    private final Object indexingLock = new Object();
-    private volatile boolean indexingInProgress = false;
+    private final SiteService siteService;
+    private final PageService pageService;
 
-    private ExecutorService executorService;
-    private List<Future<?>> futures;
+    private final ThreadManager threadManager;
+    private final DatabaseService databaseService;
+
+    private final AtomicBoolean indexingInProgress = new AtomicBoolean(false);
 
     @Autowired
-    public IndexingServiceImpl(SiteRepository siteRepository, PageRepository pageRepository, SiteCrawler siteCrawler, SitesList sitesList) {
+    public IndexingServiceImpl(SiteRepository siteRepository,
+                               PageRepository pageRepository,
+                               SiteCrawler siteCrawler,
+                               SitesList sitesList,
+                               SiteService siteService,
+                               PageService pageService,
+                               ThreadManager threadManager,
+                               DatabaseService databaseService
+    ) {
         this.siteRepository = siteRepository;
         this.pageRepository = pageRepository;
         this.siteCrawler = siteCrawler;
         this.sitesList = sitesList;
+        this.siteService = siteService;
+        this.pageService = pageService;
+        this.threadManager = threadManager;
+        this.databaseService = databaseService;
     }
 
     @Override
     public void startIndexing() throws IndexingException {
-        synchronized (indexingLock) {
-            if (indexingInProgress) {
-                throw new IndexingException("Индексация уже запущена");
-            }
+        if (indexingInProgress.getAndSet(true)) {
+            throw new IndexingException("Индексация уже запущена");
+        }
 
-            indexingInProgress = true;
-
-            executorService = Executors.newCachedThreadPool();
-            futures = new ArrayList<>();
-
-            // Получаем список сайтов из конфигурации
+        try {
             List<SiteConfig> siteConfigs = sitesList.getSiteConfigs();
 
             for (SiteConfig siteConfig : siteConfigs) {
                 try {
                     logger.info("Начинаем индексацию сайта: {}", siteConfig.getUrl());
-                    // Логика индексации одного сайта
                     indexSite(siteConfig);
                     logger.info("Индексация сайта {} завершена успешно", siteConfig.getUrl());
                 } catch (Exception e) {
-                    // Обработка ошибок индексации
-                    logger.error("Ошибка при индексации сайта: {}", siteConfig.getUrl(), e);
+                    throw new IndexingException("Ошибка при индексации сайта: " + siteConfig.getUrl(), e);
                 }
             }
-
-            // Ждем завершения всех потоков
-            futures.forEach(future -> {
-                try {
-                    future.get();
-                } catch (InterruptedException | ExecutionException e) {
-                    logger.error("Ошибка при ожидании завершения потока", e);
-                }
-            });
-
-            executorService.shutdown();
-
-            indexingInProgress = false;
+        } finally {
+            indexingInProgress.set(false);
         }
     }
 
     @Override
     public void stopIndexing() throws IndexingException {
-        synchronized (indexingLock) {
-            if (!indexingInProgress) {
-                throw new IndexingException("Индексация не запущена");
+        logger.info("Остановка индексации");
+        siteCrawler.stopCrawling();
+        threadManager.shutdownNow();
+
+        try {
+            // Ждем завершения потоков в течение 3 секунд
+            if (!threadManager.awaitTermination(3, TimeUnit.SECONDS)) {
+                logger.warn("Не удалось завершить все потоки в течение 3 секунд. Прерывание оставшихся потоков.");
+
+                // Если потоки не завершились, прерываем оставшиеся потоки мгновенно
+                siteCrawler.stopCrawling();
+                threadManager.shutdownNow();
             }
-
-            // Останавливаем все потоки
-            futures.forEach(future -> future.cancel(true));
-
-            executorService.shutdownNow();
-
-            indexingInProgress = false;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
     }
 
-    private Optional<Site> getExistingSiteByUrl(String url) {
-        return siteRepository.findByUrl(url);
-    }
-
-    private Site createNewSite(SiteConfig siteConfig) {
-        Site newSite = new Site();
-        newSite.setName(siteConfig.getName());
-        newSite.setUrl(siteConfig.getUrl());
-        newSite.setStatus(SiteStatus.INDEXING);
-        newSite.setStatusTime(LocalDateTime.now());
-        return siteRepository.save(newSite);
-    }
-
-    private Site updateSiteFields(Site site, SiteConfig siteConfig) {
-        site.setName(siteConfig.getName());
-        site.setStatus(SiteStatus.INDEXING);
-        site.setStatusTime(LocalDateTime.now());
-        // Можете добавить другие поля для обновления, если необходимо
-        return siteRepository.save(site);
-    }
-
-    private Site performIndexing(Site site, SiteConfig siteConfig) {
+    private void performIndexing(Site site, SiteConfig siteConfig) throws IndexingException {
         try {
             logger.info("Начинаем индексацию сайта: {}", siteConfig.getUrl());
+            if (!indexingInProgress.compareAndSet(false, true)) {
+                logger.info("Индексация прервана: {}", siteConfig.getUrl());
+                return;
+            }
             siteCrawler.crawlSite(siteConfig);
             logger.info("Индексация сайта {} завершена успешно", siteConfig.getUrl());
             site.setStatus(SiteStatus.INDEXED);
         } catch (Exception e) {
-            // Обработка ошибок индексации
-            site.setStatus(SiteStatus.FAILED);
             site.setLastError(e.getMessage());
             logger.error("Ошибка при индексации сайта: {}", siteConfig.getUrl(), e);
+            site.setStatus(SiteStatus.FAILED);
+            throw new IndexingException("Ошибка при индексации сайта: " + siteConfig.getUrl(), e);
+        } finally {
+            indexingInProgress.set(false);
         }
-        return site;
-    }
-
-    private void saveSiteWithTimestamp(Site site) {
-        // Установка statusTime в любом случае перед сохранением
-        site.setStatusTime(LocalDateTime.now());
-        siteRepository.save(site);
     }
 
     private void indexSite(SiteConfig siteConfig) {
-        Optional<Site> existingSiteOptional = getExistingSiteByUrl(siteConfig.getUrl());
+        threadManager.startThread(() -> {
+            try {
+                Optional<Site> existingSiteOptional = databaseService.getExistingSiteByUrl(siteConfig.getUrl());
 
-        if (existingSiteOptional.isPresent()) {
-            Site existingSite = existingSiteOptional.get();
-            updateSiteFields(existingSite, siteConfig);
-        } else {
-            Site newSite = createNewSite(siteConfig);
-            existingSiteOptional = Optional.of(newSite);
-        }
+                Site site;
+                if (existingSiteOptional.isPresent()) {
+                    site = existingSiteOptional.get();
+                    siteService.updateSiteFields(site, siteConfig);
+                } else {
+                    site = siteService.createNewSite(siteConfig);
+                }
+                performIndexing(site, siteConfig);
+            } catch (Exception e) {
+                logger.error("Ошибка при индексации сайта: {}", siteConfig.getUrl(), e);
+                setFailedStatus(siteConfig.getUrl(), e.getMessage());
+            }
+        });
+    }
 
-        Site site = existingSiteOptional.orElseThrow(() -> new RuntimeException("Не удалось получить или создать сущность для сайта: " + siteConfig.getUrl()));
-        performIndexing(site, siteConfig);
-        saveSiteWithTimestamp(site);
+    private void setFailedStatus(String url, String errorMessage) {
+        Optional<Site> existingSiteOptional = getExistingSiteByUrl(url);
+        existingSiteOptional.ifPresent(site -> {
+            site.setStatus(SiteStatus.FAILED);
+            site.setLastError(errorMessage);
+            siteRepository.save(site);
+        });
+    }
+
+    private Optional<Site> getExistingSiteByUrl(String url) {
+        return siteRepository.findByUrl(url);
     }
 
 }
