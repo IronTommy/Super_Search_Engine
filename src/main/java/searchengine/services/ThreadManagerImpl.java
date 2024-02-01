@@ -21,7 +21,6 @@ public class ThreadManagerImpl implements ThreadManager {
         this.forkJoinPool = ForkJoinPool.commonPool();
     }
 
-
     @Override
     public void startThread(Runnable task) {
         logger.info("Starting a new thread");

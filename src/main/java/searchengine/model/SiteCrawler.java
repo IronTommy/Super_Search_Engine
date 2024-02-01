@@ -9,18 +9,12 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import searchengine.config.SiteConfig;
-import searchengine.repository.PageRepository;
-import searchengine.repository.SiteRepository;
 import org.springframework.beans.factory.annotation.Value;
 import searchengine.services.IndexingException;
 import searchengine.services.PageService;
 import searchengine.services.SiteService;
 
 import java.io.IOException;
-import java.time.LocalDateTime;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 @Component
@@ -34,17 +28,13 @@ public class SiteCrawler {
 
     private static final Logger logger = LoggerFactory.getLogger(SiteCrawler.class);
 
-    private final AtomicBoolean stopCrawling = new AtomicBoolean(false);
+    public final AtomicBoolean stopCrawling = new AtomicBoolean(false);
 
-    private final SiteRepository siteRepository;
-    private final PageRepository pageRepository;
     private final SiteService siteService;
     private final PageService pageService;
 
     @Autowired
-    public SiteCrawler(SiteRepository siteRepository, PageRepository pageRepository, SiteService siteService, PageService pageService) {
-        this.siteRepository = siteRepository;
-        this.pageRepository = pageRepository;
+    public SiteCrawler(SiteService siteService, PageService pageService) {
         this.siteService = siteService;
         this.pageService = pageService;
     }
@@ -124,7 +114,7 @@ public class SiteCrawler {
         }
     }
 
-    private void processPage(Site site, String siteUrl, String path, Document document) throws IndexingException {
+    public void processPage(Site site, String siteUrl, String path, Document document) throws IndexingException {
         try {
             String content = document.html();
             pageService.createOrUpdatePage(site, siteUrl, path, 200, content);
@@ -138,4 +128,21 @@ public class SiteCrawler {
     public void stopCrawling() {
         this.stopCrawling.set(true);
     }
+
+    public String fetchHtmlContent(String url) throws IndexingException {
+        try {
+            // Получаем HTML-код страницы с помощью Jsoup
+            Document document = Jsoup.connect(url)
+                    .userAgent(userAgent)
+                    .referrer(referer)
+                    .get();
+
+            // Возвращаем HTML-код страницы в виде строки
+            return document.html();
+        } catch (IOException e) {
+            logger.error("Ошибка при получении HTML-кода страницы: {}", url, e);
+            throw new IndexingException("Ошибка при получении HTML-кода страницы: " + url, e);
+        }
+    }
+
 }

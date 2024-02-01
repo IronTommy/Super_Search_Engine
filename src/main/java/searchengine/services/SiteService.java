@@ -74,4 +74,9 @@ public class SiteService {
             throw new IndexingException("Error while updating site fields", e);
         }
     }
+
+    public Site getSiteByUrl(String url) {
+        return siteRepository.findByUrl(url).orElse(null);
+    }
+
 }

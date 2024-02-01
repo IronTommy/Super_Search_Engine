@@ -3,6 +3,7 @@ package searchengine.model;
 import lombok.*;
 
 import javax.persistence.*;
+import java.util.List;
 
 @Entity
 @Table(name = "page")
@@ -27,4 +28,5 @@ public class Page {
 
     @Column(name = "content", nullable = false, columnDefinition = "MEDIUMTEXT")
     private String content;
+
 }

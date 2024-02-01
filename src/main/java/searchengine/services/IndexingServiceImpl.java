@@ -6,16 +6,15 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import searchengine.config.SiteConfig;
 import searchengine.config.SitesList;
-import searchengine.model.Site;
-import searchengine.model.SiteCrawler;
-import searchengine.model.SiteStatus;
-import searchengine.repository.PageRepository;
+import searchengine.model.*;
 import searchengine.repository.SiteRepository;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+
 
 @Service
 public class IndexingServiceImpl implements IndexingService {
@@ -23,7 +22,6 @@ public class IndexingServiceImpl implements IndexingService {
     private static final Logger logger = LoggerFactory.getLogger(IndexingServiceImpl.class);
 
     private final SiteRepository siteRepository;
-    private final PageRepository pageRepository;
 
     private final SiteCrawler siteCrawler;
     private final SitesList sitesList;
@@ -34,26 +32,32 @@ public class IndexingServiceImpl implements IndexingService {
     private final ThreadManager threadManager;
     private final DatabaseService databaseService;
 
+    private final TextProcessingService textProcessingService;
+
+    private final LemmaService lemmaService;
+
     private final AtomicBoolean indexingInProgress = new AtomicBoolean(false);
 
     @Autowired
     public IndexingServiceImpl(SiteRepository siteRepository,
-                               PageRepository pageRepository,
                                SiteCrawler siteCrawler,
                                SitesList sitesList,
                                SiteService siteService,
                                PageService pageService,
                                ThreadManager threadManager,
-                               DatabaseService databaseService
+                               DatabaseService databaseService,
+                               TextProcessingService textProcessingService,
+                               LemmaService lemmaService
     ) {
         this.siteRepository = siteRepository;
-        this.pageRepository = pageRepository;
         this.siteCrawler = siteCrawler;
         this.sitesList = sitesList;
         this.siteService = siteService;
         this.pageService = pageService;
         this.threadManager = threadManager;
         this.databaseService = databaseService;
+        this.textProcessingService = textProcessingService;
+        this.lemmaService = lemmaService;
     }
 
     @Override
@@ -122,7 +126,8 @@ public class IndexingServiceImpl implements IndexingService {
     private void indexSite(SiteConfig siteConfig) {
         threadManager.startThread(() -> {
             try {
-                Optional<Site> existingSiteOptional = databaseService.getExistingSiteByUrl(siteConfig.getUrl());
+                Optional<Site> existingSiteOptional = databaseService
+                        .getExistingSiteByUrl(siteConfig.getUrl());
 
                 Site site;
                 if (existingSiteOptional.isPresent()) {
@@ -151,5 +156,45 @@ public class IndexingServiceImpl implements IndexingService {
     private Optional<Site> getExistingSiteByUrl(String url) {
         return siteRepository.findByUrl(url);
     }
+
+    @Override
+    public void indexPage(String url) throws IndexingException {
+        try {
+            // Шаг 1: Получение HTML-кода страницы
+            String htmlContent = siteCrawler.fetchHtmlContent(url);
+
+            // Шаг 2: Сохранение HTML-кода в таблицу page
+            Page page = pageService.createPage(url, htmlContent);
+
+            // Получаем сайт по URL
+            Site site = siteService.getSiteByUrl(url);
+
+            // Шаг 3: Преобразование HTML-кода в леммы и их количества
+            Map<String, Integer> lemmas = textProcessingService.collectLemmas(htmlContent);
+
+            // Шаг 4: Сохранение лемм в таблицу lemma и обновление frequency
+            for (Map.Entry<String, Integer> entry : lemmas.entrySet()) {
+                String lemmaText = entry.getKey();
+                Integer frequency = entry.getValue();
+
+                // Получаем лемму по тексту
+                logger.debug("Trying to get or create lemma for text: {}", lemmaText);
+                Lemma lemma = lemmaService.getOrCreateLemma(lemmaText, site);
+                logger.debug("Lemma found or created successfully: {}", lemma);
+
+                // Обновляем частоту леммы
+                lemma.setFrequency(lemma.getFrequency() + frequency);
+                lemmaService.saveLemma(lemma);
+
+                // Обновляем связь леммы и страницы
+                pageService.updatePageLemmaRelation(page, lemma, frequency);
+            }
+
+        } catch (Exception e) {
+            logger.error("Error indexing page: " + url, e);
+            throw new IndexingException("Error indexing page: " + url, e);
+        }
+    }
+
 
 }

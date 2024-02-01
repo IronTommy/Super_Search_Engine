@@ -39,4 +39,16 @@ public class IndexingControllerHelper {
         }
         return response;
     }
+
+    public Map<String, Object> indexPage(String url) {
+        Map<String, Object> response = new HashMap<>();
+        try {
+            indexingService.indexPage(url);
+            response.put("result", true);
+        } catch (IndexingException e) {
+            response.put("result", false);
+            response.put("error", e.getMessage());
+        }
+        return response;
+    }
 }

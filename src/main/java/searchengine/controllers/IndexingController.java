@@ -2,9 +2,8 @@ package searchengine.controllers;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
+
 import java.util.Map;
 
 @RestController
@@ -26,5 +25,10 @@ public class IndexingController {
     @GetMapping("/stopIndexing")
     public ResponseEntity<Map<String, Object>> stopIndexing() {
         return ResponseEntity.ok(indexingControllerHelper.stopIndexing());
+    }
+
+    @PostMapping("/indexPage")
+    public ResponseEntity<Map<String, Object>> indexPage(@RequestParam("url") String url) {
+        return ResponseEntity.ok(indexingControllerHelper.indexPage(url));
     }
 }

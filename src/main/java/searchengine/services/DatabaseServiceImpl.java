@@ -22,8 +22,4 @@ public class DatabaseServiceImpl implements DatabaseService {
         return siteRepository.findByUrl(url);
     }
 
-    @Override
-    public void saveSite(Site site) {
-        siteRepository.save(site);
-    }
 }
